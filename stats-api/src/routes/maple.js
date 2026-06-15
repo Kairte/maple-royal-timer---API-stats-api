@@ -130,9 +130,26 @@ function parseAppearanceInfo(source, kind, options = {}) {
   const code = nested
     ? readNestedNumberLike(nested, ["hair_code", "face_code", "code", "item_code", "itemCode"])
     : readNestedNumberLike(source, flatCodeCandidates);
+  const baseColor = nested
+    ? readNestedText(nested, ["base_color", "baseColor", "hair_base_color", "face_base_color"])
+    : readNestedText(source, ["base_color", "baseColor", "hair_base_color", "face_base_color"]);
+  const mixColor = nested
+    ? readNestedText(nested, ["mix_color", "mixColor", "hair_mix_color", "face_mix_color"])
+    : readNestedText(source, ["mix_color", "mixColor", "hair_mix_color", "face_mix_color"]);
+  const mixRateText = nested
+    ? readNestedNumberLike(nested, ["mix_rate", "mixRate", "hair_mix_rate", "face_mix_rate"])
+    : readNestedNumberLike(source, ["mix_rate", "mixRate", "hair_mix_rate", "face_mix_rate"]);
+  const mixRate = Number.parseInt(String(mixRateText || "").replace(/[^\d.-]/g, ""), 10);
   const inferredCodeFromImage = image ? String(image).match(/(\d{5,8})/)?.[1] || "" : "";
 
-  return { name, image, code: code || inferredCodeFromImage };
+  return {
+    name,
+    image,
+    code: code || inferredCodeFromImage,
+    baseColor,
+    mixColor,
+    mixRate: Number.isFinite(mixRate) ? Math.max(0, Math.min(100, mixRate)) : null,
+  };
 }
 
 function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
@@ -164,6 +181,7 @@ function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
 
   return {
     ok: true,
+    apiVersion: "2026-06-15-appearance-color-v1",
     characterName: readNestedText(basic, ["character_name"]) || "",
     worldName: readNestedText(basic, ["world_name"]) || requestedWorld || "",
     characterGender,
@@ -187,6 +205,7 @@ function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
 
 mapleRouter.get("/profile-bundle", async (req, res, next) => {
   try {
+    res.set("Cache-Control", "no-store");
     const worldName = String(req.query.world || "").trim();
     const characterName = String(req.query.characterName || req.query.name || "").trim();
     const paths = getMaplePaths();

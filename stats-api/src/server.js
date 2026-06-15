@@ -9,6 +9,7 @@ import { statsRouter } from "./routes/stats.js";
 import { mapleRouter } from "./routes/maple.js";
 
 const app = express();
+const apiVersion = "2026-06-15-appearance-color-v1";
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -31,6 +32,7 @@ app.get("/health", async (_req, res) => {
   if (!hasDatabaseConfig) {
     return res.json({
       ok: true,
+      apiVersion,
       database: {
         configured: false,
         connected: false,
@@ -43,6 +45,7 @@ app.get("/health", async (_req, res) => {
     await pool.query("select 1");
     return res.json({
       ok: true,
+      apiVersion,
       database: {
         configured: true,
         connected: true,
@@ -51,6 +54,7 @@ app.get("/health", async (_req, res) => {
   } catch (error) {
     return res.status(200).json({
       ok: true,
+      apiVersion,
       database: {
         configured: true,
         connected: false,
