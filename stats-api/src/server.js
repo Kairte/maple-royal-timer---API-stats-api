@@ -7,9 +7,10 @@ import { quizRouter } from "./routes/quiz.js";
 import { awardsRouter } from "./routes/awards.js";
 import { statsRouter } from "./routes/stats.js";
 import { mapleRouter } from "./routes/maple.js";
+import { boardgameRouter } from "./routes/boardgames.js";
 
 const app = express();
-const apiVersion = "2026-06-15-appearance-color-v1";
+const apiVersion = "2026-08-13-boardgame-analytics-v1";
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -66,6 +67,7 @@ app.get("/health", async (_req, res) => {
 
 app.use("/api/quiz-events", quizRouter);
 app.use("/api/awards-events", awardsRouter);
+app.use("/api/boardgame-play-events", boardgameRouter);
 app.use("/api/stats", statsRouter);
 app.use("/api/maple", mapleRouter);
 
