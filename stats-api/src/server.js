@@ -31,35 +31,51 @@ app.get("/health", async (_req, res) => {
   const hasDatabaseConfig = Boolean(String(process.env.DATABASE_URL || "").trim());
 
   if (!hasDatabaseConfig) {
-    return res.json({
-      ok: true,
+    return res.status(503).json({
+      ok: false,
       apiVersion,
       database: {
         configured: false,
         connected: false,
         message: "DATABASE_URL is not configured.",
       },
+      features: {
+        boardgameAnalytics: false,
+      },
     });
   }
 
   try {
-    await pool.query("select 1");
-    return res.json({
-      ok: true,
+    const readinessResult = await pool.query(
+      `select to_regclass('public.boardgame_play_events') is not null as "boardgameTableReady"`,
+    );
+    const boardgameTableReady = Boolean(readinessResult.rows[0]?.boardgameTableReady);
+
+    return res.status(boardgameTableReady ? 200 : 503).json({
+      ok: boardgameTableReady,
       apiVersion,
       database: {
         configured: true,
         connected: true,
       },
+      features: {
+        boardgameAnalytics: boardgameTableReady,
+      },
+      ...(!boardgameTableReady && {
+        message: "Board-game analytics migration has not been applied.",
+      }),
     });
   } catch (error) {
-    return res.status(200).json({
-      ok: true,
+    return res.status(503).json({
+      ok: false,
       apiVersion,
       database: {
         configured: true,
         connected: false,
         message: error.message || "Database connection failed.",
+      },
+      features: {
+        boardgameAnalytics: false,
       },
     });
   }
