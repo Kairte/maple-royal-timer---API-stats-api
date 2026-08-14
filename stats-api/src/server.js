@@ -5,12 +5,12 @@ import helmet from "helmet";
 import { pool } from "./db.js";
 import { quizRouter } from "./routes/quiz.js";
 import { awardsRouter } from "./routes/awards.js";
+import { boardgameRouter } from "./routes/boardgame.js";
 import { statsRouter } from "./routes/stats.js";
 import { mapleRouter } from "./routes/maple.js";
-import { boardgameRouter } from "./routes/boardgames.js";
 
 const app = express();
-const apiVersion = "2026-08-13-boardgame-analytics-v1";
+const apiVersion = "2026-06-15-appearance-color-v1";
 const allowedOrigins = String(process.env.ALLOWED_ORIGINS || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -31,51 +31,35 @@ app.get("/health", async (_req, res) => {
   const hasDatabaseConfig = Boolean(String(process.env.DATABASE_URL || "").trim());
 
   if (!hasDatabaseConfig) {
-    return res.status(503).json({
-      ok: false,
+    return res.json({
+      ok: true,
       apiVersion,
       database: {
         configured: false,
         connected: false,
         message: "DATABASE_URL is not configured.",
       },
-      features: {
-        boardgameAnalytics: false,
-      },
     });
   }
 
   try {
-    const readinessResult = await pool.query(
-      `select to_regclass('public.boardgame_play_events') is not null as "boardgameTableReady"`,
-    );
-    const boardgameTableReady = Boolean(readinessResult.rows[0]?.boardgameTableReady);
-
-    return res.status(boardgameTableReady ? 200 : 503).json({
-      ok: boardgameTableReady,
+    await pool.query("select 1");
+    return res.json({
+      ok: true,
       apiVersion,
       database: {
         configured: true,
         connected: true,
       },
-      features: {
-        boardgameAnalytics: boardgameTableReady,
-      },
-      ...(!boardgameTableReady && {
-        message: "Board-game analytics migration has not been applied.",
-      }),
     });
   } catch (error) {
-    return res.status(503).json({
-      ok: false,
+    return res.status(200).json({
+      ok: true,
       apiVersion,
       database: {
         configured: true,
         connected: false,
         message: error.message || "Database connection failed.",
-      },
-      features: {
-        boardgameAnalytics: false,
       },
     });
   }
@@ -83,7 +67,7 @@ app.get("/health", async (_req, res) => {
 
 app.use("/api/quiz-events", quizRouter);
 app.use("/api/awards-events", awardsRouter);
-app.use("/api/boardgame-play-events", boardgameRouter);
+app.use("/api/boardgame-events", boardgameRouter);
 app.use("/api/stats", statsRouter);
 app.use("/api/maple", mapleRouter);
 

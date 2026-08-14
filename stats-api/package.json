@@ -5,10 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --watch src/server.js",
-    "db:migrate:boardgames": "node src/scripts/migrate-boardgames.js",
-    "start": "node src/server.js",
-    "test": "node --test",
-    "verify:deployment": "node src/scripts/verify-deployment.js"
+    "start": "node src/server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
