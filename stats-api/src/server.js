@@ -27,6 +27,21 @@ app.use(cors({
 }));
 app.use(express.json({ limit: "1mb" }));
 
+app.get("/", (_req, res) => {
+  res.json({
+    ok: true,
+    name: "maple-royal-timer-stats-api",
+    apiVersion,
+    endpoints: {
+      health: "/health",
+      quizEvents: "/api/quiz-events",
+      awardsEvents: "/api/awards-events",
+      boardgameEvents: "/api/boardgame-events",
+      dashboardRankings: "/api/stats/dashboard-rankings",
+    },
+  });
+});
+
 app.get("/health", async (_req, res) => {
   const hasDatabaseConfig = Boolean(String(process.env.DATABASE_URL || "").trim());
 
