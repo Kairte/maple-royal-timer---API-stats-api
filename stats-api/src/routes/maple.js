@@ -1,6 +1,13 @@
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
 import { Router } from "express";
 
 export const mapleRouter = Router();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, "../../..");
 
 const PREVIEW_CODE_FIELDS = ["hair", "face", "skin", "outfit"];
 const PREVIEW_GENDERS = new Set(["male", "female", "common"]);
@@ -119,7 +126,53 @@ function buildPreviewPartUrl(kind, code) {
   return `${getPreviewAssetRoot()}/${normalizedKind}/${normalizedCode}.png`;
 }
 
-async function resolvePreviewPartHref(kind, code) {
+function getPreviewGenderSuffix(gender) {
+  if (gender === "female") return "f";
+  return "m";
+}
+
+function getLocalPreviewAssetCandidates(kind, code, spec = {}) {
+  const normalizedKind = String(kind || "").trim().toLowerCase();
+  const normalizedCode = normalizePreviewCode(code);
+  if (!normalizedCode) return [];
+
+  const genderSuffix = getPreviewGenderSuffix(spec.gender);
+  if (normalizedKind === "hair" || normalizedKind === "face") {
+    return [
+      path.join(projectRoot, "new", `${normalizedCode}${genderSuffix}.png`),
+      path.join(projectRoot, "new", `${normalizedCode}.png`),
+    ];
+  }
+
+  if (normalizedKind === "base") {
+    return [
+      path.join(projectRoot, "skin", `${normalizePreviewCode(spec.outfit)}.png`),
+      path.join(projectRoot, "skin", `${normalizePreviewCode(spec.skin)}.png`),
+    ].filter((filePath) => !/\/\.png$/i.test(filePath.replace(/\\/g, "/")));
+  }
+
+  return [
+    path.join(projectRoot, normalizedKind, `${normalizedCode}.png`),
+  ];
+}
+
+async function readLocalPreviewAssetHref(kind, code, spec = {}) {
+  const candidates = getLocalPreviewAssetCandidates(kind, code, spec);
+  for (const filePath of candidates) {
+    try {
+      const buffer = await fs.readFile(filePath);
+      return `data:image/png;base64,${buffer.toString("base64")}`;
+    } catch {
+      // Try the next local candidate.
+    }
+  }
+  return "";
+}
+
+async function resolvePreviewPartHref(kind, code, spec = {}) {
+  const localHref = await readLocalPreviewAssetHref(kind, code, spec);
+  if (localHref) return localHref;
+
   const url = buildPreviewPartUrl(kind, code);
   if (!url) return "";
 
@@ -145,16 +198,15 @@ async function resolvePreviewPartHref(kind, code) {
 
 async function buildPreviewCompositeSvg(spec) {
   const layerSpecs = [
-    { kind: "skin", code: spec.skin, opacity: "1" },
-    { kind: "outfit", code: spec.outfit, opacity: "1" },
-    { kind: "face", code: spec.face, opacity: "1" },
-    { kind: "hair", code: spec.hair, opacity: "1" },
+    { kind: "base", code: spec.outfit, opacity: "1", x: 68, y: 74, width: 43, height: 68 },
+    { kind: "face", code: spec.face, opacity: "1", x: 0, y: 0, width: 180, height: 180 },
+    { kind: "hair", code: spec.hair, opacity: "1", x: 0, y: 0, width: 180, height: 180 },
   ];
 
   const layers = await Promise.all(
     layerSpecs.map(async (layer) => ({
       ...layer,
-      href: await resolvePreviewPartHref(layer.kind, layer.code),
+      href: await resolvePreviewPartHref(layer.kind, layer.code, spec),
     }))
   );
 
@@ -162,12 +214,12 @@ async function buildPreviewCompositeSvg(spec) {
     .map((layer) => {
       const href = layer.href;
       if (!href) return "";
-      return `<image href="${escapeSvgText(href)}" x="0" y="0" width="720" height="720" preserveAspectRatio="xMidYMid meet" opacity="${layer.opacity}"/>`;
+      return `<image href="${escapeSvgText(href)}" x="${layer.x}" y="${layer.y}" width="${layer.width}" height="${layer.height}" preserveAspectRatio="xMidYMid meet" opacity="${layer.opacity}"/>`;
     })
     .join("\n      ");
 
   return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="720" height="720" viewBox="0 0 720 720">
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
   <g>
     ${imageMarkup}
   </g>
@@ -462,8 +514,7 @@ mapleRouter.get("/appearance-preview", (req, res) => {
   const spec = normalizePreviewSpec(req.query);
   const rendererTemplate = getPreviewRendererTemplate();
   const partUrls = {
-    skin: buildPreviewPartUrl("skin", spec.skin),
-    outfit: buildPreviewPartUrl("outfit", spec.outfit),
+    base: `local:skin/${spec.outfit}.png`,
     face: buildPreviewPartUrl("face", spec.face),
     hair: buildPreviewPartUrl("hair", spec.hair),
   };
