@@ -98,21 +98,25 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
     if (view === "boardgame") {
       await ensureBoardgameSchema();
 
-      const modeFilter = category === "all" ? "" : category;
+      const canonicalModeExpr = "case when mode = 'mandara' then 'mandala' else mode end";
+      const modeFilter = category === "all" ? "" : (category === "mandara" ? "mandala" : category);
       const params = modeFilter ? [modeFilter, limit] : [limit];
-      const whereClause = modeFilter ? "where mode = $1" : "";
+      const whereClause = modeFilter ? `where ${canonicalModeExpr} = $1` : "";
       const limitParam = modeFilter ? "$2" : "$1";
 
       const result = await pool.query(
         `with ranked as (
            select
-             mode,
-             coalesce(nullif(max(mode_label), ''), mode) as "modeLabel",
+             ${canonicalModeExpr} as mode,
+             case
+               when ${canonicalModeExpr} = 'mandala' then 'MANDALA'
+               else coalesce(nullif(max(mode_label), ''), ${canonicalModeExpr})
+             end as "modeLabel",
              count(*)::int as count,
              max(created_at) as "lastPlayedAt"
            from boardgame_play_events
            ${whereClause}
-           group by mode
+           group by ${canonicalModeExpr}
          ),
          totals as (
            select coalesce(sum(count), 0)::int as total from ranked

@@ -9,7 +9,8 @@ function normalizeText(value) {
 }
 
 function normalizeMode(value) {
-  return normalizeText(value).toLowerCase().replace(/[^a-z0-9-]/g, "");
+  const normalized = normalizeText(value).toLowerCase().replace(/[^a-z0-9-]/g, "");
+  return normalized === "mandara" ? "mandala" : normalized;
 }
 
 boardgameRouter.post("/", async (req, res, next) => {

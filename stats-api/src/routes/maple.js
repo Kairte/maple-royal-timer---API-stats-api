@@ -1,19 +1,10 @@
-import fs from "fs/promises";
-import path from "path";
-import { fileURLToPath } from "url";
 import { Router } from "express";
 
 export const mapleRouter = Router();
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const projectRoot = path.resolve(__dirname, "../../..");
-
 const PREVIEW_CODE_FIELDS = ["hair", "face", "skin", "outfit"];
 const PREVIEW_GENDERS = new Set(["male", "female", "common"]);
 const PREVIEW_TYPES = new Set(["hair", "face"]);
-const PREVIEW_ASSET_CACHE_TTL_MS = 1000 * 60 * 60;
-const previewAssetCache = new Map();
 
 function normalizeApiPath(value) {
   const text = String(value || "").trim();
@@ -33,16 +24,6 @@ function getMapleApiKey() {
 
 function getPreviewRendererTemplate() {
   return String(process.env.MAPLE_PREVIEW_RENDERER_URL_TEMPLATE || "").trim();
-}
-
-function getPreviewAssetRoot() {
-  return String(
-    process.env.MAPLE_PREVIEW_ASSET_ROOT || "https://storage.meaegi.com/storage/images/dressing-room"
-  ).replace(/\/+$/, "");
-}
-
-function getPreviewPartUrlTemplate() {
-  return String(process.env.MAPLE_PREVIEW_PART_URL_TEMPLATE || "").trim();
 }
 
 function getMaplePaths() {
@@ -109,121 +90,6 @@ function escapeSvgText(value) {
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;");
-}
-
-function buildPreviewPartUrl(kind, code) {
-  const normalizedKind = String(kind || "").trim().toLowerCase();
-  const normalizedCode = normalizePreviewCode(code);
-  if (!normalizedKind || !normalizedCode) return "";
-
-  const template = getPreviewPartUrlTemplate();
-  if (template) {
-    return template
-      .replace(/\{kind\}/g, encodeURIComponent(normalizedKind))
-      .replace(/\{code\}/g, encodeURIComponent(normalizedCode));
-  }
-
-  return `${getPreviewAssetRoot()}/${normalizedKind}/${normalizedCode}.png`;
-}
-
-function getPreviewGenderSuffix(gender) {
-  if (gender === "female") return "f";
-  return "m";
-}
-
-function getLocalPreviewAssetCandidates(kind, code, spec = {}) {
-  const normalizedKind = String(kind || "").trim().toLowerCase();
-  const normalizedCode = normalizePreviewCode(code);
-  if (!normalizedCode) return [];
-
-  const genderSuffix = getPreviewGenderSuffix(spec.gender);
-  if (normalizedKind === "hair" || normalizedKind === "face") {
-    return [
-      path.join(projectRoot, "new", `${normalizedCode}${genderSuffix}.png`),
-      path.join(projectRoot, "new", `${normalizedCode}.png`),
-    ];
-  }
-
-  if (normalizedKind === "base") {
-    return [
-      path.join(projectRoot, "skin", `${normalizePreviewCode(spec.outfit)}.png`),
-      path.join(projectRoot, "skin", `${normalizePreviewCode(spec.skin)}.png`),
-    ].filter((filePath) => !/\/\.png$/i.test(filePath.replace(/\\/g, "/")));
-  }
-
-  return [
-    path.join(projectRoot, normalizedKind, `${normalizedCode}.png`),
-  ];
-}
-
-async function readLocalPreviewAssetHref(kind, code, spec = {}) {
-  const candidates = getLocalPreviewAssetCandidates(kind, code, spec);
-  for (const filePath of candidates) {
-    try {
-      const buffer = await fs.readFile(filePath);
-      return `data:image/png;base64,${buffer.toString("base64")}`;
-    } catch {
-      // Try the next local candidate.
-    }
-  }
-  return "";
-}
-
-async function resolvePreviewPartHref(kind, code, spec = {}) {
-  const localHref = await readLocalPreviewAssetHref(kind, code, spec);
-  if (localHref) return localHref;
-
-  const url = buildPreviewPartUrl(kind, code);
-  if (!url) return "";
-
-  const cached = previewAssetCache.get(url);
-  if (cached && cached.expiresAt > Date.now()) return cached.href;
-
-  try {
-    const response = await fetch(url);
-    if (!response.ok) return url;
-
-    const contentType = response.headers.get("content-type") || "image/png";
-    const buffer = Buffer.from(await response.arrayBuffer());
-    const href = `data:${contentType};base64,${buffer.toString("base64")}`;
-    previewAssetCache.set(url, {
-      href,
-      expiresAt: Date.now() + PREVIEW_ASSET_CACHE_TTL_MS,
-    });
-    return href;
-  } catch {
-    return url;
-  }
-}
-
-async function buildPreviewCompositeSvg(spec) {
-  const layerSpecs = [
-    { kind: "base", code: spec.outfit, opacity: "1", x: 68, y: 74, width: 43, height: 68 },
-    { kind: "face", code: spec.face, opacity: "1", x: 0, y: 0, width: 180, height: 180 },
-    { kind: "hair", code: spec.hair, opacity: "1", x: 0, y: 0, width: 180, height: 180 },
-  ];
-
-  const layers = await Promise.all(
-    layerSpecs.map(async (layer) => ({
-      ...layer,
-      href: await resolvePreviewPartHref(layer.kind, layer.code, spec),
-    }))
-  );
-
-  const imageMarkup = layers
-    .map((layer) => {
-      const href = layer.href;
-      if (!href) return "";
-      return `<image href="${escapeSvgText(href)}" x="${layer.x}" y="${layer.y}" width="${layer.width}" height="${layer.height}" preserveAspectRatio="xMidYMid meet" opacity="${layer.opacity}"/>`;
-    })
-    .join("\n      ");
-
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="180" height="180" viewBox="0 0 180 180">
-  <g>
-    ${imageMarkup}
-  </g>
-</svg>`;
 }
 
 function buildPreviewFallbackSvg(spec) {
@@ -503,8 +369,12 @@ mapleRouter.get("/appearance-preview.svg", async (req, res, next) => {
       return res.redirect(302, applyPreviewRendererTemplate(rendererTemplate, spec));
     }
 
-    res.set("Cache-Control", "public, max-age=300");
-    return res.type("image/svg+xml").send(await buildPreviewCompositeSvg(spec));
+    res.set("Cache-Control", "no-store");
+    return res.type("image/svg+xml").send(buildPreviewFallbackSvg({
+      ...spec,
+      hairName: "renderer not configured",
+      faceName: "set MAPLE_PREVIEW_RENDERER_URL_TEMPLATE",
+    }));
   } catch (error) {
     return next(error);
   }
@@ -513,19 +383,13 @@ mapleRouter.get("/appearance-preview.svg", async (req, res, next) => {
 mapleRouter.get("/appearance-preview", (req, res) => {
   const spec = normalizePreviewSpec(req.query);
   const rendererTemplate = getPreviewRendererTemplate();
-  const partUrls = {
-    base: `local:skin/${spec.outfit}.png`,
-    face: buildPreviewPartUrl("face", spec.face),
-    hair: buildPreviewPartUrl("hair", spec.hair),
-  };
 
   return res.json({
     ok: true,
     configured: Boolean(rendererTemplate),
-    renderer: rendererTemplate ? "external-template" : "svg-layer-composite",
+    renderer: rendererTemplate ? "external-template" : "not-configured",
     imageUrl: `/api/maple/appearance-preview.svg?${new URLSearchParams(spec).toString()}`,
     rendererUrl: rendererTemplate ? applyPreviewRendererTemplate(rendererTemplate, spec) : "",
-    partUrls,
     spec,
   });
 });
