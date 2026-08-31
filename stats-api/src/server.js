@@ -37,6 +37,7 @@ app.get("/", (_req, res) => {
       quizEvents: "/api/quiz-events",
       awardsEvents: "/api/awards-events",
       boardgameEvents: "/api/boardgame-events",
+      boardgameStats: "/api/stats/boardgames",
       dashboardRankings: "/api/stats/dashboard-rankings",
     },
   });

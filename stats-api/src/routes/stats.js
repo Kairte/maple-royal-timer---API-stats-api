@@ -8,6 +8,112 @@ function toPercent(value) {
   return Math.round(Number(value || 0) * 10) / 10;
 }
 
+statsRouter.get("/boardgames", async (req, res, next) => {
+  try {
+    const requestedDays = Number.parseInt(req.query.days, 10);
+    const days = Number.isFinite(requestedDays)
+      ? Math.min(Math.max(requestedDays, 1), 365)
+      : 30;
+    const canonicalModeExpr = "case when mode = 'mandara' then 'mandala' else mode end";
+    const periodClause = `(created_at at time zone 'Asia/Seoul')::date >=
+      ((now() at time zone 'Asia/Seoul')::date - ($1::int - 1))`;
+
+    await ensureBoardgameSchema();
+
+    const [overviewResult, modesResult, dailyResult, devicesResult] = await Promise.all([
+      pool.query(
+        `select
+           count(*) filter (where ${periodClause})::int as "periodPlays",
+           count(*)::int as "allTimePlays",
+           count(distinct session_id) filter (where ${periodClause})::int as "uniqueSessions",
+           count(distinct ${canonicalModeExpr}) filter (where ${periodClause})::int as "activeModes"
+         from boardgame_play_events`,
+        [days]
+      ),
+      pool.query(
+        `with mode_counts as (
+           select
+             ${canonicalModeExpr} as "gameMode",
+             count(*)::int as "playCount",
+             count(distinct session_id)::int as "uniqueSessions"
+           from boardgame_play_events
+           where ${periodClause}
+           group by ${canonicalModeExpr}
+         ), totals as (
+           select coalesce(sum("playCount"), 0)::int as total from mode_counts
+         )
+         select
+           "gameMode",
+           "playCount",
+           "uniqueSessions",
+           case when totals.total = 0 then 0
+             else round(("playCount"::numeric / totals.total::numeric) * 100, 1)
+           end as "sharePercent"
+         from mode_counts
+         cross join totals
+         order by "playCount" desc, "gameMode" asc`,
+        [days]
+      ),
+      pool.query(
+        `with dates as (
+           select generate_series(
+             (now() at time zone 'Asia/Seoul')::date - ($1::int - 1),
+             (now() at time zone 'Asia/Seoul')::date,
+             interval '1 day'
+           )::date as day
+         ), daily_counts as (
+           select
+             (created_at at time zone 'Asia/Seoul')::date as day,
+             count(*)::int as count
+           from boardgame_play_events
+           where ${periodClause}
+           group by (created_at at time zone 'Asia/Seoul')::date
+         )
+         select to_char(dates.day, 'YYYY-MM-DD') as date, coalesce(daily_counts.count, 0)::int as count
+         from dates
+         left join daily_counts using (day)
+         order by dates.day asc`,
+        [days]
+      ),
+      pool.query(
+        `select
+           case when device_type in ('desktop', 'mobile', 'tablet') then device_type else 'unknown' end as "deviceType",
+           count(*)::int as "playCount"
+         from boardgame_play_events
+         where ${periodClause}
+         group by 1
+         order by "playCount" desc`,
+        [days]
+      ),
+    ]);
+
+    const overview = overviewResult.rows[0] || {};
+    const periodPlays = Number(overview.periodPlays || 0);
+
+    return res.json({
+      ok: true,
+      days,
+      overview: {
+        periodPlays,
+        allTimePlays: Number(overview.allTimePlays || 0),
+        uniqueSessions: Number(overview.uniqueSessions || 0),
+        activeModes: Number(overview.activeModes || 0),
+        dailyAverage: toPercent(periodPlays / days),
+      },
+      modes: modesResult.rows.map((row) => ({
+        ...row,
+        playCount: Number(row.playCount || 0),
+        uniqueSessions: Number(row.uniqueSessions || 0),
+        sharePercent: toPercent(row.sharePercent),
+      })),
+      daily: dailyResult.rows,
+      devices: devicesResult.rows,
+    });
+  } catch (error) {
+    return next(error);
+  }
+});
+
 statsRouter.get("/items/:itemKey", async (req, res, next) => {
   try {
     const { itemKey } = req.params;

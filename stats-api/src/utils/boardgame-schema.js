@@ -14,6 +14,9 @@ export function ensureBoardgameSchema() {
         created_at timestamptz not null default now()
       );
 
+      alter table boardgame_play_events
+        add column if not exists device_type text;
+
       create index if not exists idx_boardgame_play_events_mode
         on boardgame_play_events(mode);
 

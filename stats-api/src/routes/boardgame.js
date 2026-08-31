@@ -13,6 +13,19 @@ function normalizeMode(value) {
   return normalized === "mandara" ? "mandala" : normalized;
 }
 
+function detectDeviceType(req) {
+  const mobileHint = String(req.get("sec-ch-ua-mobile") || "").toLowerCase();
+  const userAgent = String(req.get("user-agent") || "").toLowerCase();
+
+  if (/ipad|tablet|kindle|silk/.test(userAgent) || (/android/.test(userAgent) && !/mobile/.test(userAgent))) {
+    return "tablet";
+  }
+  if (mobileHint === "?1" || /mobile|iphone|ipod|android/.test(userAgent)) {
+    return "mobile";
+  }
+  return userAgent ? "desktop" : "unknown";
+}
+
 boardgameRouter.post("/", async (req, res, next) => {
   try {
     const {
@@ -31,13 +44,14 @@ boardgameRouter.post("/", async (req, res, next) => {
 
     await pool.query(
       `insert into boardgame_play_events
-       (session_id, mode, mode_label, source)
-       values ($1, $2, $3, $4)`,
+       (session_id, mode, mode_label, source, device_type)
+       values ($1, $2, $3, $4, $5)`,
       [
         normalizeText(sessionId),
         normalizedMode,
         normalizeText(modeLabel) || normalizedMode,
         normalizeText(source) || null,
+        detectDeviceType(req),
       ]
     );
 
