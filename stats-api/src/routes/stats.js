@@ -15,6 +15,7 @@ statsRouter.get("/boardgames", async (req, res, next) => {
       ? Math.min(Math.max(requestedDays, 1), 365)
       : 30;
     const canonicalModeExpr = "case when mode = 'mandara' then 'mandala' else mode end";
+    const countedModeClause = "mode <> 'error'";
     const periodClause = `(created_at at time zone 'Asia/Seoul')::date >=
       ((now() at time zone 'Asia/Seoul')::date - ($1::int - 1))`;
 
@@ -27,7 +28,8 @@ statsRouter.get("/boardgames", async (req, res, next) => {
            count(*)::int as "allTimePlays",
            count(distinct session_id) filter (where ${periodClause})::int as "uniqueSessions",
            count(distinct ${canonicalModeExpr}) filter (where ${periodClause})::int as "activeModes"
-         from boardgame_play_events`,
+         from boardgame_play_events
+         where ${countedModeClause}`,
         [days]
       ),
       pool.query(
@@ -38,6 +40,7 @@ statsRouter.get("/boardgames", async (req, res, next) => {
              count(distinct session_id)::int as "uniqueSessions"
            from boardgame_play_events
            where ${periodClause}
+             and ${countedModeClause}
            group by ${canonicalModeExpr}
          ), totals as (
            select coalesce(sum("playCount"), 0)::int as total from mode_counts
@@ -67,6 +70,7 @@ statsRouter.get("/boardgames", async (req, res, next) => {
              count(*)::int as count
            from boardgame_play_events
            where ${periodClause}
+             and ${countedModeClause}
            group by (created_at at time zone 'Asia/Seoul')::date
          )
          select to_char(dates.day, 'YYYY-MM-DD') as date, coalesce(daily_counts.count, 0)::int as count
@@ -81,6 +85,7 @@ statsRouter.get("/boardgames", async (req, res, next) => {
            count(*)::int as "playCount"
          from boardgame_play_events
          where ${periodClause}
+           and ${countedModeClause}
          group by 1
          order by "playCount" desc`,
         [days]
@@ -207,7 +212,7 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
       const canonicalModeExpr = "case when mode = 'mandara' then 'mandala' else mode end";
       const modeFilter = category === "all" ? "" : (category === "mandara" ? "mandala" : category);
       const params = modeFilter ? [modeFilter, limit] : [limit];
-      const whereClause = modeFilter ? `where ${canonicalModeExpr} = $1` : "";
+      const whereClause = `where mode <> 'error'${modeFilter ? ` and ${canonicalModeExpr} = $1` : ""}`;
       const limitParam = modeFilter ? "$2" : "$1";
 
       const result = await pool.query(

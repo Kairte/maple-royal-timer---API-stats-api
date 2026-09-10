@@ -39,6 +39,9 @@ boardgameRouter.post("/", async (req, res, next) => {
     if (!sessionId || !normalizedMode) {
       return res.status(400).json({ ok: false, message: "Missing required boardgame event fields." });
     }
+    if (normalizedMode === "error") {
+      return res.status(202).json({ ok: true, ignored: true });
+    }
 
     await ensureBoardgameSchema();
 
