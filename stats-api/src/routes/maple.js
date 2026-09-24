@@ -151,33 +151,48 @@ async function callMapleApi(path, query = {}) {
     throw error;
   }
 
-  const response = await fetch(buildApiUrl(path, query), {
-    headers: {
-      "x-nxopen-api-key": apiKey,
-    },
-  });
-
-  const text = await response.text();
-  let payload = null;
-
+  const timeoutMs = Math.max(1, Number(process.env.NEXON_MAPLE_FETCH_TIMEOUT_MS) || 12000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = text;
-  }
+    const response = await fetch(buildApiUrl(path, query), {
+      headers: {
+        "x-nxopen-api-key": apiKey,
+      },
+      signal: controller.signal,
+    });
 
-  if (!response.ok) {
-    const error = new Error(
-      typeof payload === "object" && payload?.message
-        ? payload.message
-        : `Maple API request failed with status ${response.status}.`
-    );
-    error.statusCode = response.status;
-    error.details = payload;
+    const text = await response.text();
+    let payload = null;
+
+    try {
+      payload = text ? JSON.parse(text) : null;
+    } catch {
+      payload = text;
+    }
+
+    if (!response.ok) {
+      const error = new Error(
+        typeof payload === "object" && payload?.message
+          ? payload.message
+          : `Maple API request failed with status ${response.status}.`
+      );
+      error.statusCode = response.status;
+      error.details = payload;
+      throw error;
+    }
+
+    return payload;
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error("Maple Open API request timed out.");
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
     throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  return payload;
 }
 
 function readNestedText(container, keys = []) {
@@ -277,15 +292,6 @@ function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
       face: parseAppearanceInfo(beauty, "face", { preferAdditional: true }),
     },
   } : null;
-  const debugZeroAppearance = isZeroJob ? {
-    basicGender,
-    beautyGender,
-    characterHair: beauty?.character_hair || null,
-    additionalCharacterHair: beauty?.additional_character_hair || null,
-    characterFace: beauty?.character_face || null,
-    additionalCharacterFace: beauty?.additional_character_face || null,
-  } : null;
-
   return {
     ok: true,
     apiVersion: "2026-06-15-appearance-color-v1",
@@ -302,15 +308,57 @@ function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
     hair,
     face,
     zeroAppearanceSources,
-    debugZeroAppearance,
-    raw: {
-      basic,
-      beauty,
-    },
   };
 }
 
+mapleRouter.get("/ping", (_req, res) => {
+  res.set("Cache-Control", "no-store");
+  return res.json({ ok: true });
+});
+
+const PROFILE_CACHE_TTL_MS = 45 * 1000;
+const OCID_CACHE_TTL_MS = 15 * 60 * 1000;
+const profileCache = new Map();
+const ocidCache = new Map();
+
+function readMemoryCache(cache, key) {
+  const entry = cache.get(key);
+  if (!entry) return null;
+  if (entry.expiresAt <= Date.now()) {
+    cache.delete(key);
+    return null;
+  }
+  return entry.value;
+}
+
+function writeMemoryCache(cache, key, value, ttlMs, maxEntries) {
+  cache.delete(key);
+  cache.set(key, { value, expiresAt: Date.now() + ttlMs });
+  while (cache.size > maxEntries) cache.delete(cache.keys().next().value);
+}
+
 mapleRouter.get("/profile-bundle", async (req, res, next) => {
+  const started = performance.now();
+  const timings = {};
+  let profileCacheState = "MISS";
+  let ocidCacheState = "SKIP";
+  const timedCall = async (name, path, query) => {
+    const phaseStarted = performance.now();
+    try {
+      return await callMapleApi(path, query);
+    } finally {
+      timings[name] = performance.now() - phaseStarted;
+    }
+  };
+  const setServerTiming = () => {
+    const phases = [`profile_cache;desc="${profileCacheState}"`, `ocid_cache;desc="${ocidCacheState}"`];
+    phases.push(...["id", "basic", "beauty"]
+      .filter((name) => timings[name] !== undefined)
+      .map((name) => `${name};dur=${timings[name].toFixed(1)}`));
+    phases.push(`total;dur=${(performance.now() - started).toFixed(1)}`);
+    res.set("Server-Timing", phases.join(", "));
+  };
+
   try {
     res.set("Cache-Control", "no-store");
     const worldName = String(req.query.world || "").trim();
@@ -318,18 +366,35 @@ mapleRouter.get("/profile-bundle", async (req, res, next) => {
     const paths = getMaplePaths();
 
     if (!characterName) {
+      setServerTiming();
       return res.status(400).json({
         ok: false,
         message: "characterName is required.",
       });
     }
 
-    const idPayload = await callMapleApi(paths.id, {
-      character_name: characterName,
-    });
-    const ocid = readNestedText(idPayload, ["ocid"]);
+    const characterKey = characterName.toLocaleLowerCase();
+    const profileKey = `${worldName.toLocaleLowerCase()}::${characterKey}`;
+    const cachedProfile = readMemoryCache(profileCache, profileKey);
+    if (cachedProfile) {
+      profileCacheState = "HIT";
+      setServerTiming();
+      return res.json(cachedProfile);
+    }
+
+    let ocid = readMemoryCache(ocidCache, characterKey);
+    let idPayload;
+    if (ocid) {
+      ocidCacheState = "HIT";
+    } else {
+      ocidCacheState = "MISS";
+      idPayload = await timedCall("id", paths.id, { character_name: characterName });
+      ocid = readNestedText(idPayload, ["ocid"]);
+      if (ocid) writeMemoryCache(ocidCache, characterKey, ocid, OCID_CACHE_TTL_MS, 1000);
+    }
 
     if (!ocid) {
+      setServerTiming();
       return res.status(404).json({
         ok: false,
         message: "Character ocid was not found from Maple Open API.",
@@ -338,16 +403,23 @@ mapleRouter.get("/profile-bundle", async (req, res, next) => {
     }
 
     const [basicPayload, beautyPayload] = await Promise.all([
-      callMapleApi(paths.basic, { ocid }),
-      callMapleApi(paths.beauty, { ocid }),
+      timedCall("basic", paths.basic, { ocid }),
+      timedCall("beauty", paths.beauty, { ocid }),
     ]);
 
-    return res.json(buildProfileBundle(
+    const bundle = buildProfileBundle(
       { ...basicPayload, ocid },
       beautyPayload,
       worldName
-    ));
+    );
+    writeMemoryCache(profileCache, profileKey, bundle, PROFILE_CACHE_TTL_MS, 200);
+    setServerTiming();
+    return res.json(bundle);
   } catch (error) {
+    setServerTiming();
+    if (error.statusCode === 504) {
+      return res.status(504).json({ ok: false, message: error.message });
+    }
     return next(error);
   }
 });
