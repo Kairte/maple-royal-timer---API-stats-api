@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ensureBoardgameSchema } from "../utils/boardgame-schema.js";
-import { isProductionBoardgameOrigin } from "../utils/boardgame-origin.js";
+import { requireProductionStatsOrigin } from "../utils/stats-origin.js";
 
 export const boardgameRouter = Router();
 
@@ -27,12 +27,8 @@ function detectDeviceType(req) {
   return userAgent ? "desktop" : "unknown";
 }
 
-boardgameRouter.post("/", async (req, res, next) => {
+boardgameRouter.post("/", requireProductionStatsOrigin, async (req, res, next) => {
   try {
-    if (!isProductionBoardgameOrigin(req.get("origin"))) {
-      return res.status(202).json({ ok: true, ignored: true });
-    }
-
     const {
       sessionId,
       mode,

@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { upsertItem } from "../utils/items.js";
+import { requireProductionStatsOrigin } from "../utils/stats-origin.js";
 
 export const quizRouter = Router();
 
-quizRouter.post("/", async (req, res, next) => {
+quizRouter.post("/", requireProductionStatsOrigin, async (req, res, next) => {
   try {
     const {
       sessionId,

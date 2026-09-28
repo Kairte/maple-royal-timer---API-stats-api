@@ -1,10 +1,11 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { upsertItem } from "../utils/items.js";
+import { requireProductionStatsOrigin } from "../utils/stats-origin.js";
 
 export const awardsRouter = Router();
 
-awardsRouter.post("/", async (req, res, next) => {
+awardsRouter.post("/", requireProductionStatsOrigin, async (req, res, next) => {
   try {
     const {
       sessionId,
