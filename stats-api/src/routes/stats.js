@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { pool } from "../db.js";
 import { ensureBoardgameSchema } from "../utils/boardgame-schema.js";
+import { ensureAwardsSchema } from "../utils/awards-schema.js";
 
 export const statsRouter = Router();
 
@@ -341,6 +342,11 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
       });
     }
 
+    const awardsMode = String(req.query.mode || 'league').toLowerCase();
+    if (!['quick', 'league', 'seize'].includes(awardsMode)) {
+      return res.status(400).json({ ok: false, message: 'Invalid awards mode.' });
+    }
+    await ensureAwardsSchema();
     const result = await pool.query(
       `with ranked as (
          select
@@ -350,7 +356,7 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
            count(*)::int as count
          from awards_events a
          left join items i on i.item_key = a.chosen_item_key
-         where a.awards_category = $1
+         where a.awards_category = $1 and a.awards_mode = $3
          group by a.chosen_item_key, i.name, i.image_url
        ),
        totals as (
@@ -369,14 +375,14 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
        cross join totals
        order by ranked.count desc, ranked.name asc
        limit $2`,
-      [category, limit]
+      [category, limit, awardsMode]
     );
 
     const totalResult = await pool.query(
       `select count(*)::int as count
        from awards_events
-       where awards_category = $1`,
-      [category]
+       where awards_category = $1 and awards_mode = $2`,
+      [category, awardsMode]
     );
 
     const totalEvents = totalResult.rows[0]?.count || 0;
@@ -398,6 +404,7 @@ statsRouter.get("/dashboard-rankings", async (req, res, next) => {
         `1위 점유율 ${topShare}%`,
       ],
       items,
+      awardsMode,
     });
   } catch (error) {
     return next(error);

@@ -25,6 +25,7 @@ create table if not exists awards_events (
   id bigserial primary key,
   session_id text not null,
   awards_category text not null,
+  awards_mode text not null default 'league',
   round_name text not null,
   group_name text,
   matchup_id text,
@@ -48,6 +49,8 @@ create index if not exists idx_quiz_events_category on quiz_events(quiz_category
 create index if not exists idx_quiz_events_chosen_item_key on quiz_events(chosen_item_key);
 create index if not exists idx_quiz_events_created_at on quiz_events(created_at);
 create index if not exists idx_awards_events_category on awards_events(awards_category);
+alter table awards_events add column if not exists awards_mode text not null default 'league';
+create index if not exists idx_awards_events_mode_category on awards_events(awards_mode, awards_category);
 create index if not exists idx_awards_events_round_name on awards_events(round_name);
 create index if not exists idx_awards_events_chosen_item_key on awards_events(chosen_item_key);
 create index if not exists idx_awards_events_created_at on awards_events(created_at);
