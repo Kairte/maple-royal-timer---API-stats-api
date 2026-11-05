@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { createNexonOpenIdRouter } from "./nexon-open-id.js";
 
 export const mapleRouter = Router();
 
@@ -310,6 +311,22 @@ function buildProfileBundle(basic = {}, beauty = {}, requestedWorld = "") {
     zeroAppearanceSources,
   };
 }
+
+mapleRouter.use("/open-id", createNexonOpenIdRouter(async (character) => {
+  const paths = getMaplePaths();
+  const identity = await callMapleApi(paths.id, { character_name: character.characterName });
+  const ocid = readNestedText(identity, ["ocid"]);
+  if (!ocid) throw new Error("Character identifier was not returned.");
+  const [basic, beauty] = await Promise.all([
+    callMapleApi(paths.basic, { ocid }),
+    callMapleApi(paths.beauty, { ocid }),
+  ]);
+  const actualWorld = readNestedText(basic, ["world_name"]);
+  if (actualWorld && actualWorld !== character.worldName) throw new Error("Character world has changed.");
+  const profile = buildProfileBundle(basic, beauty, character.worldName);
+  delete profile.ocid;
+  return profile;
+}));
 
 mapleRouter.get("/ping", (_req, res) => {
   res.set("Cache-Control", "no-store");
